@@ -59,7 +59,7 @@ npm run dev
 
 其中服務角色金鑰、Steam Web API 金鑰、同步 token 與 OpenAI 金鑰只能放在 Vercel 的伺服器端環境變數，不可放入 `NEXT_PUBLIC_*`。部署完成後，還要在 Supabase Authentication > URL Configuration 設定正式網站 URL 與 redirect URL。
 
-目前 Production 已部署並可由 [game-match-sigma.vercel.app](https://game-match-sigma.vercel.app) 存取，部署建置與首頁驗證均已通過。Vercel 與 GitHub 的自動部署連線尚待在 Vercel 帳號中建立 GitHub Login Connection；在完成前仍可使用 Vercel CLI 手動部署。
+目前 Production 已部署並可由 [game-match-sigma.vercel.app](https://game-match-sigma.vercel.app) 存取，部署建置與首頁驗證均已通過。Vercel 已連接 GitHub repository，推送至 `main` 會自動觸發 Production 部署。
 
 ## Supabase 資料庫
 
