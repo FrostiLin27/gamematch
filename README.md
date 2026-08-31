@@ -50,7 +50,7 @@ npm run dev
 
 ## 正式部署（Vercel）
 
-目前專案已加入 `vercel.json`，正式建置指令為 `npm ci` 與 `npm run build`。部署前需要先將專案放入 GitHub／GitLab 等 Git repository，再於 Vercel 匯入該 repository。
+目前專案已加入 `vercel.json`，正式建置指令為 `npm ci` 與 `npm run build`。程式碼已推送至 [FrostiLin27/gamematch](https://github.com/FrostiLin27/gamematch)，並已建立 Vercel `game-match` 專案。
 
 在 Vercel 的 Production 與 Preview 環境分別設定必要環境變數：
 
@@ -59,7 +59,7 @@ npm run dev
 
 其中服務角色金鑰、Steam Web API 金鑰、同步 token 與 OpenAI 金鑰只能放在 Vercel 的伺服器端環境變數，不可放入 `NEXT_PUBLIC_*`。部署完成後，還要在 Supabase Authentication > URL Configuration 設定正式網站 URL 與 redirect URL。
 
-目前尚未連接外部 Git repository、Vercel 專案或正式網域；這些步驟需要使用者帳號授權後才能完成。
+目前 Production 已部署並可由 [game-match-sigma.vercel.app](https://game-match-sigma.vercel.app) 存取，部署建置與首頁驗證均已通過。Vercel 與 GitHub 的自動部署連線尚待在 Vercel 帳號中建立 GitHub Login Connection；在完成前仍可使用 Vercel CLI 手動部署。
 
 ## Supabase 資料庫
 
