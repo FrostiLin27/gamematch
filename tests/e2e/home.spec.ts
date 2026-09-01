@@ -44,3 +44,11 @@ test("renders mocked Steam search results", async ({ page }) => {
   await expect(page.getByTestId("steam-results")).toContainText("Hades");
   await expect(page.getByTestId("steam-results")).toContainText("NT$ 408");
 });
+
+test("renders the my games page for an unauthenticated visitor", async ({ page }) => {
+  await page.goto("/my-games");
+  await expect(page.locator(".my-games-frame")).toBeVisible();
+  await expect(page.locator(".music-player")).toBeVisible();
+  await expect(page.getByRole("heading", { name: /你的遊戲/ })).toBeVisible();
+  await expect(page.getByText(/登入後查看你的遊戲|尚未連接雲端資料庫/)).toBeVisible();
+});

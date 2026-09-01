@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import BackgroundMusic from "./components/BackgroundMusic";
 import { games, genreOptions, moodOptions, modeOptions, platformOptions, languageOptions, sessionOptions, difficultyOptions, type Game } from "../lib/games";
 import { mapDatabaseGame } from "../lib/catalog";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
@@ -61,12 +62,6 @@ const optionLabels: Record<string, string> = {
   short: "短時長", medium: "中等時長", long: "高時長", easy: "輕鬆上手", hard: "越難越好", free: "免費優先", paid: "可以付費", any: "沒有限制",
 };
 const difficultyLabels: Record<string, string> = Object.fromEntries(difficultyOptions.map((item) => [item.value, item.label]));
-
-const musicTracks = [
-  { title: "天空之城", src: "/audio/castle-in-the-sky.mp3" },
-  { title: "冰原雪域", src: "/audio/frozen-snowfield.mp3" },
-  { title: "魔法森林", src: "/audio/magic-forest.mp3" },
-] as const;
 
 export default function Home() {
   const [scene, setScene] = useState<Scene>("landing");
@@ -258,13 +253,19 @@ export default function Home() {
     }
   }
 
-  function saveFeedback(status: FeedbackStatus) {
+  function persistCurrentFeedback(patch: Partial<Pick<HistoryItem, "status" | "rating" | "favorite">>) {
     if (!recommendation) return;
-    const item: HistoryItem = { gameId: recommendation.id, status, rating, favorite: isFavorite, updatedAt: new Date().toISOString() };
+    const previous = history.find((item) => item.gameId === recommendation.id);
+    const item: HistoryItem = { gameId: recommendation.id, status: patch.status ?? previous?.status ?? "neutral", rating: patch.rating ?? previous?.rating ?? rating, favorite: patch.favorite ?? previous?.favorite ?? isFavorite, updatedAt: new Date().toISOString() };
     const nextHistory = [...history.filter((entry) => entry.gameId !== recommendation.id), item];
     setHistory(nextHistory);
     window.localStorage.setItem("game-match-history", JSON.stringify(nextHistory));
     void syncFeedbackToCloud(supabase, authUser?.id, [item]);
+  }
+
+  function saveFeedback(status: FeedbackStatus) {
+    if (!recommendation) return;
+    persistCurrentFeedback({ status });
     setFeedback(status);
   }
 
@@ -366,7 +367,7 @@ export default function Home() {
       <header className="topbar">
         <button className="brand" onClick={restart} aria-label="回到首頁"><span className="brand-mark">✦</span><span>GAME MATCH</span><small>遊戲火柴</small></button>
         <div className="topbar-note"><span className="status-dot" /> 一支火柴，點亮下一段旅程</div>
-        {isSupabaseConfigured && <AuthControls user={authUser} isOpen={isAuthPanelOpen} mode={authMode} email={authEmail} password={authPassword} message={authMessage} isLoading={isAuthLoading} onToggle={() => { setIsAuthPanelOpen((value) => !value); setAuthMessage(""); }} onModeChange={(mode) => { setAuthMode(mode); setAuthMessage(""); }} onEmailChange={setAuthEmail} onPasswordChange={setAuthPassword} onSubmit={submitAuth} onSignOut={signOut} />}
+        {isSupabaseConfigured && <div className="topbar-actions"><a className="my-games-nav" href="/my-games">我的遊戲</a><AuthControls user={authUser} isOpen={isAuthPanelOpen} mode={authMode} email={authEmail} password={authPassword} message={authMessage} isLoading={isAuthLoading} onToggle={() => { setIsAuthPanelOpen((value) => !value); setAuthMessage(""); }} onModeChange={(mode) => { setAuthMode(mode); setAuthMessage(""); }} onEmailChange={setAuthEmail} onPasswordChange={setAuthPassword} onSubmit={submitAuth} onSignOut={signOut} /></div>}
       </header>
 
       {scene === "landing" && <Landing onStart={startMode} />}
@@ -374,7 +375,7 @@ export default function Home() {
       {scene === "questions" && currentQuestion && <QuestionFlow question={currentQuestion} index={questionIndex} total={questions.length} value={currentValue} onChoose={chooseOption} onNext={nextQuestion} onBack={() => questionIndex === 0 ? setScene("mode") : setQuestionIndex((index) => index - 1)} />}
       {scene === "freeText" && <FreeTextInput value={freeText} onChange={setFreeText} onSubmit={submitFreeText} isSubmitting={isParsingFreeText} onBack={() => setScene("mode")} />}
       {scene === "analyzing" && <Analyzing notice={analysisNotice} />}
-      {scene === "results" && recommendation && <Results game={recommendation} index={activeRecommendation} total={recommendations.length} preferences={preferences} feedback={feedback} rating={rating} favorite={isFavorite} onRate={setRating} onFavorite={() => setIsFavorite((value) => !value)} onFeedback={saveFeedback} onNext={nextRecommendation} onRestart={restart} onEdit={() => setScene("mode")} />}
+      {scene === "results" && recommendation && <Results game={recommendation} index={activeRecommendation} total={recommendations.length} preferences={preferences} feedback={feedback} rating={rating} favorite={isFavorite} onRate={(nextRating) => { setRating(nextRating); persistCurrentFeedback({ rating: nextRating }); }} onFavorite={() => { const nextFavorite = !isFavorite; setIsFavorite(nextFavorite); persistCurrentFeedback({ favorite: nextFavorite }); }} onFeedback={saveFeedback} onNext={nextRecommendation} onRestart={restart} onEdit={() => setScene("mode")} />}
       {scene === "results" && !recommendation && <EmptyResults onRestart={restart} />}
     </main>
   );
@@ -448,70 +449,6 @@ function AuthControls({ user, isOpen, mode, email, password, message, isLoading,
 
 function Snowfall() {
   return <div className="snowfall" aria-hidden="true">{Array.from({ length: 22 }, (_, index) => <i key={index} style={{ "--x": `${(index * 47) % 100}%`, "--delay": `${(index % 8) * -1.4}s`, "--duration": `${8 + (index % 5)}s`, "--size": `${3 + (index % 4)}px` } as React.CSSProperties}>✦</i>)}</div>;
-}
-
-function BackgroundMusic() {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const mutedRef = useRef(false);
-  const [trackIndex, setTrackIndex] = useState<number | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-  const [needsGesture, setNeedsGesture] = useState(false);
-  const activeIndex = trackIndex ?? 0;
-
-  function tryPlay() {
-    const audio = audioRef.current;
-    if (!audio || !audio.src || mutedRef.current) return;
-    void audio.play().then(() => {
-      setIsPlaying(true);
-      setNeedsGesture(false);
-    }).catch(() => {
-      setIsPlaying(false);
-      setNeedsGesture(true);
-    });
-  }
-
-  useEffect(() => {
-    setTrackIndex(Math.floor(Math.random() * musicTracks.length));
-  }, []);
-
-  useEffect(() => {
-    if (trackIndex === null) return;
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.src = musicTracks[trackIndex].src;
-    audio.volume = 0.3;
-    audio.load();
-    tryPlay();
-  }, [trackIndex]);
-
-  useEffect(() => {
-    const handleFirstInteraction = () => tryPlay();
-    document.addEventListener("pointerdown", handleFirstInteraction);
-    return () => document.removeEventListener("pointerdown", handleFirstInteraction);
-  }, []);
-
-  function switchTrack() {
-    setTrackIndex((current) => ((current ?? 0) + 1) % musicTracks.length);
-  }
-
-  function toggleMusic() {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (isMuted) {
-      mutedRef.current = false;
-      setIsMuted(false);
-      tryPlay();
-    } else {
-      mutedRef.current = true;
-      audio.pause();
-      setIsMuted(true);
-      setIsPlaying(false);
-      setNeedsGesture(false);
-    }
-  }
-
-  return <div className="music-player"><audio ref={audioRef} loop preload="auto" aria-hidden="true" /><span className={`music-icon ${isPlaying ? "playing" : ""}`} aria-hidden="true">♫</span><div className="music-meta"><small>BACKGROUND MUSIC</small><strong>{musicTracks[activeIndex].title}</strong></div><button className="music-next" onClick={switchTrack} aria-label="切換背景音樂">換一首</button><button className="music-toggle" onClick={toggleMusic} aria-label={isMuted ? "播放背景音樂" : "關閉背景音樂"}>{isMuted ? "播放" : needsGesture ? "點擊播放" : "關閉"}</button></div>;
 }
 
 function SceneFrame({ eyebrow, title, children, className = "" }: { eyebrow: string; title: React.ReactNode; children: React.ReactNode; className?: string }) {
