@@ -5,6 +5,7 @@ import type { User } from "@supabase/supabase-js";
 import BackgroundMusic from "../components/BackgroundMusic";
 import { mapDatabaseGame } from "../../lib/catalog";
 import type { Game } from "../../lib/games";
+import { markGameDeleted, readDeletedGameIds, removeLocalHistoryItem, unmarkGameDeleted } from "../../lib/history-storage";
 import { isSupabaseConfigured, supabase } from "../../lib/supabase";
 import type { HistoryItem } from "../../lib/recommender";
 
@@ -96,7 +97,8 @@ export default function MyGamesPage() {
         return;
       }
 
-      const rows = (feedbackResult.data ?? []).filter(isFeedbackRow);
+      const deletedGameIds = new Set(readDeletedGameIds());
+      const rows = (feedbackResult.data ?? []).filter(isFeedbackRow).filter((row) => !deletedGameIds.has(row.game_id));
       const ids = [...new Set(rows.map((row) => row.game_id))];
       if (ids.length === 0) {
         setItems([]);
@@ -187,6 +189,7 @@ export default function MyGamesPage() {
     setItems((current) => current.filter((entry) => entry.game.id !== item.game.id));
     setSavingId(item.game.id);
     setMessage("");
+    markGameDeleted(item.game.id);
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -203,6 +206,7 @@ export default function MyGamesPage() {
 
       removeLocalHistoryItem(item.game.id);
     } catch (error) {
+      unmarkGameDeleted(item.game.id);
       setItems(previous);
       setMessage(error instanceof Error ? error.message : "清除失敗，請稍後再試。 ");
     } finally {
@@ -269,18 +273,6 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat("zh-TW", { month: "numeric", day: "numeric" }).format(new Date(value));
 }
 
-function removeLocalHistoryItem(gameId: string) {
-  try {
-    const saved = window.localStorage.getItem("game-match-history");
-    if (!saved) return;
-    const parsed = JSON.parse(saved);
-    if (!Array.isArray(parsed)) return;
-    const nextHistory = parsed.filter((item) => !(item && typeof item === "object" && (item as { gameId?: unknown }).gameId === gameId));
-    window.localStorage.setItem("game-match-history", JSON.stringify(nextHistory));
-  } catch {
-    // Local storage is only a cache; the cloud deletion has already succeeded.
-  }
-}
 
 function Snowfall() {
   return <div className="snowfall" aria-hidden="true">{Array.from({ length: 22 }, (_, index) => <i key={index} style={{ "--x": `${(index * 47) % 100}%`, "--delay": `${(index % 8) * -1.4}s`, "--duration": `${8 + (index % 5)}s`, "--size": `${3 + (index % 4)}px` } as React.CSSProperties}>✦</i>)}</div>;

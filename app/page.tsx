@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import BackgroundMusic from "./components/BackgroundMusic";
 import { games, genreOptions, moodOptions, modeOptions, platformOptions, languageOptions, sessionOptions, difficultyOptions, type Game } from "../lib/games";
+import { readDeletedGameIds, unmarkGameDeleted } from "../lib/history-storage";
 import { mapDatabaseGame } from "../lib/catalog";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 import { emptyPreferences, normalizePreferences, parseFreeText, recommendGames, type HistoryItem, type Preferences } from "../lib/recommender";
@@ -128,8 +129,9 @@ export default function Home() {
 
       if (preferencesResult.data) setPreferences(preferencesFromDatabase(preferencesResult.data));
 
-      const localHistory = readLocalHistory();
-      const cloudHistory = (feedbackResult.data ?? []).map(historyFromDatabase).filter((item): item is HistoryItem => item !== null);
+      const deletedGameIds = new Set(readDeletedGameIds());
+      const localHistory = readLocalHistory().filter((item) => !deletedGameIds.has(item.gameId));
+      const cloudHistory = (feedbackResult.data ?? []).map(historyFromDatabase).filter((item): item is HistoryItem => item !== null && !deletedGameIds.has(item.gameId));
       const mergedHistory = mergeHistory(localHistory, cloudHistory);
       setHistory(mergedHistory);
       window.localStorage.setItem("game-match-history", JSON.stringify(mergedHistory));
@@ -255,6 +257,7 @@ export default function Home() {
 
   function persistCurrentFeedback(patch: Partial<Pick<HistoryItem, "status" | "rating" | "favorite">>) {
     if (!recommendation) return;
+    unmarkGameDeleted(recommendation.id);
     const previous = history.find((item) => item.gameId === recommendation.id);
     const item: HistoryItem = { gameId: recommendation.id, status: patch.status ?? previous?.status ?? "neutral", rating: patch.rating ?? previous?.rating ?? rating, favorite: patch.favorite ?? previous?.favorite ?? isFavorite, updatedAt: new Date().toISOString() };
     const nextHistory = [...history.filter((entry) => entry.gameId !== recommendation.id), item];
