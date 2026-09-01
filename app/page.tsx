@@ -92,10 +92,9 @@ export default function Home() {
     if (!feedback) return;
     const timeoutId = window.setTimeout(() => {
       setFeedback(null);
-      nextRecommendation();
     }, feedbackDisplayDuration);
     return () => window.clearTimeout(timeoutId);
-  }, [feedback]);
+  }, [activeRecommendation, feedback]);
 
   useEffect(() => {
     if (!supabase) {
@@ -288,12 +287,12 @@ export default function Home() {
     return true;
   }
 
-  async function saveFeedback(status: FeedbackStatus) {
+  function saveFeedback(status: FeedbackStatus) {
     if (!recommendation) return;
     const persistence = persistCurrentFeedback({ status });
     if (activeRecommendation >= recommendations.length - 1) {
-      // Save the local record synchronously, then do not let a slow cloud request
-      // prevent the required end-of-session navigation.
+      // The local record is written before this point; do not block the
+      // required end-of-session navigation on a slow cloud request.
       void persistence.catch((error) => {
         console.warn("Unable to finish feedback sync before leaving:", error);
       });
@@ -301,6 +300,7 @@ export default function Home() {
       return;
     }
     setFeedback(status);
+    nextRecommendation(true);
     void persistence.catch((error) => {
       console.warn("Unable to finish feedback sync:", error);
     });
@@ -375,10 +375,10 @@ export default function Home() {
     if (itemsError) console.warn("Unable to save recommendation items:", itemsError.message);
   }
 
-  function nextRecommendation() {
+  function nextRecommendation(preserveFeedback = false) {
     if (activeRecommendation < recommendations.length - 1) {
       setActiveRecommendation((index) => index + 1);
-      setFeedback(null);
+      if (!preserveFeedback) setFeedback(null);
       setRating(0);
       setIsFavorite(false);
     } else {
