@@ -187,19 +187,27 @@ export default function MyGamesPage() {
     setItems((current) => current.filter((entry) => entry.game.id !== item.game.id));
     setSavingId(item.game.id);
     setMessage("");
-    const { data: deletedRows, error } = await supabase
-      .from("game_feedback")
-      .delete()
-      .eq("user_id", user.id)
-      .eq("game_id", item.game.id)
-      .select("game_id");
-    if (error || !deletedRows?.length) {
-      setItems(previous);
-      setMessage("清除失敗，請稍後再試。 ");
-    } else {
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error("登入狀態已失效，請重新登入。 ");
+
+      const response = await fetch("/api/feedback", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ gameId: item.game.id }),
+      });
+      const payload = await response.json() as { deleted?: unknown; error?: string };
+      if (!response.ok || payload.deleted !== 1) throw new Error(payload.error || "清除失敗，請稍後再試。 ");
+
       removeLocalHistoryItem(item.game.id);
+    } catch (error) {
+      setItems(previous);
+      setMessage(error instanceof Error ? error.message : "清除失敗，請稍後再試。 ");
+    } finally {
+      setSavingId(null);
     }
-    setSavingId(null);
   }
 
   return (
