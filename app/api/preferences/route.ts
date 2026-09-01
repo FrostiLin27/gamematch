@@ -89,7 +89,6 @@ export async function POST(request: Request) {
       return NextResponse.json({
         source: "local",
         preferences: parseFreeText(text),
-        message: "目前使用本地分析，仍可完成推薦。",
       });
     }
   } catch {

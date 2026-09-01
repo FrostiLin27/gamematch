@@ -160,6 +160,45 @@ body, button, a, textarea, input, select, [role="button"] { cursor: url('/matchs
 .example-pills button:hover { color: #b9361b; border-color: #b9361b; }
 @media (max-width: 700px) { .steam-search-panel { margin-top: 24px; padding: 14px; }.steam-results { grid-template-columns: 1fr; }.steam-result-card { grid-template-columns: 64px 1fr auto; }.steam-result-card img, .steam-result-placeholder { width: 64px; } }
 
+/* Igloo texture for the fireplace dialog: icy white, pale blue and teal seams. */
+.free-text-wrap {
+  background:
+    radial-gradient(ellipse at 23% 12%, rgba(255,255,255,.92) 0 8%, transparent 28%),
+    radial-gradient(ellipse at 82% 38%, rgba(255,255,255,.5) 0 7%, transparent 28%),
+    repeating-linear-gradient(0deg, transparent 0 30px, rgba(52,113,119,.62) 30px 33px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.14) 0 49px, rgba(52,113,119,.5) 49px 52px, rgba(255,255,255,.08) 52px 94px),
+    linear-gradient(180deg, #f4ffff 0%, #d7f0f0 47%, #a4d4d5 100%);
+  border-color: #2d6d72;
+  box-shadow: 0 8px 0 rgba(49,105,111,.55), 0 20px 30px rgba(63,121,135,.2), inset 0 0 28px rgba(255,255,255,.55);
+}
+.free-text-wrap::before {
+  border-color: #2d6d72;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.8), transparent 48%),
+    repeating-linear-gradient(0deg, transparent 0 22px, rgba(52,113,119,.58) 22px 25px),
+    repeating-linear-gradient(90deg, #f3ffff 0 26px, #9acfd1 26px 29px, #d9f1f1 29px 55px, #4e9296 55px 58px),
+    linear-gradient(180deg, #eaffff, #9dced0);
+  box-shadow: 0 5px 0 rgba(49,105,111,.42), inset 0 0 14px rgba(255,255,255,.62);
+}
+.free-text-wrap::after {
+  background: linear-gradient(180deg, #eaffff, #a1d2d3 52%, #629da1);
+  box-shadow: 0 6px 0 rgba(49,105,111,.24), inset 0 3px 0 rgba(255,255,255,.65);
+}
+.free-text-wrap textarea {
+  background:
+    radial-gradient(ellipse at 20% 8%, rgba(255,255,255,.9), transparent 34%),
+    linear-gradient(180deg, rgba(249,255,255,.98), rgba(210,239,237,.96));
+  border-color: #3a7b7f;
+  box-shadow: inset 0 0 0 3px rgba(255,255,255,.62), inset 0 -18px 30px rgba(73,145,149,.12), 0 5px 0 rgba(255,255,255,.55);
+}
+.free-text-wrap textarea:focus { border-color: #27666b; box-shadow: inset 0 0 0 3px rgba(255,255,255,.62), 0 0 0 4px rgba(75,157,163,.25); }
+.free-text-wrap textarea::placeholder { color: #73989a; }
+.free-text-wrap .quote-mark { color: #4e9296; opacity: .72; }
+.free-text-wrap .char-count { color: #477b7d; }
+.free-text-frame .free-text-wrap { transform: translateY(5px); }
+.free-text-frame .example-pills { transform: translateY(21px); }
+.detail:first-child { padding-left: 12px; }
+
 /* My games shelf */
 .topbar-actions { display: flex; align-items: center; gap: 14px; }
 .my-games-nav { display: inline-block; padding: 8px 13px; color: #7b3528; background: rgba(255,247,225,.82); border: 1px solid rgba(139,52,39,.3); border-radius: 999px; box-shadow: 0 4px 0 rgba(139,52,39,.12); font-size: 11px; text-decoration: none; transition: .2s ease; white-space: nowrap; }

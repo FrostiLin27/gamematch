@@ -61,6 +61,8 @@ export default function MyGamesPage() {
     const { data: authState } = client.auth.onAuthStateChange((_event, session) => {
       if (!active) return;
       setUser(session?.user ?? null);
+      setItems([]);
+      setMessage("");
       setAuthResolved(true);
     });
 
@@ -97,7 +99,7 @@ export default function MyGamesPage() {
         return;
       }
 
-      const deletedGameIds = new Set(readDeletedGameIds());
+      const deletedGameIds = new Set(readDeletedGameIds(userId));
       const rows = (feedbackResult.data ?? []).filter(isFeedbackRow).filter((row) => !deletedGameIds.has(row.game_id));
       const ids = [...new Set(rows.map((row) => row.game_id))];
       if (ids.length === 0) {
@@ -189,7 +191,7 @@ export default function MyGamesPage() {
     setItems((current) => current.filter((entry) => entry.game.id !== item.game.id));
     setSavingId(item.game.id);
     setMessage("");
-    markGameDeleted(item.game.id);
+    markGameDeleted(item.game.id, user.id);
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -204,9 +206,9 @@ export default function MyGamesPage() {
       const payload = await response.json() as { deleted?: unknown; error?: string };
       if (!response.ok || payload.deleted !== 1) throw new Error(payload.error || "清除失敗，請稍後再試。 ");
 
-      removeLocalHistoryItem(item.game.id);
+      removeLocalHistoryItem(item.game.id, user.id);
     } catch (error) {
-      unmarkGameDeleted(item.game.id);
+      unmarkGameDeleted(item.game.id, user.id);
       setItems(previous);
       setMessage(error instanceof Error ? error.message : "清除失敗，請稍後再試。 ");
     } finally {
@@ -227,7 +229,7 @@ export default function MyGamesPage() {
       <section className="scene-frame my-games-frame">
         <div className="eyebrow"><span /> YOUR GAME SHELF <span /></div>
         <h1>你的遊戲，<em>都在這裡</em></h1>
-        <p className="section-copy">重新看看曾經點亮的選擇，也可以隨時改變心意。</p>
+        <p className="section-copy">重新看看曾經點亮的選擇 也可以隨時改變心意</p>
 
         {!isSupabaseConfigured && <EmptyState title="尚未連接雲端資料庫" description="完成 Supabase 設定後，這裡會保存你的遊戲紀錄。" actionLabel="回到首頁" actionHref="/" />}
         {isSupabaseConfigured && !authResolved && <div className="my-games-notice">正在確認登入狀態…</div>}

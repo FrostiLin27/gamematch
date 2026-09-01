@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import BackgroundMusic from "./components/BackgroundMusic";
 import { games, genreOptions, moodOptions, modeOptions, platformOptions, languageOptions, sessionOptions, difficultyOptions, type Game } from "../lib/games";
-import { readDeletedGameIds, unmarkGameDeleted } from "../lib/history-storage";
+import { readDeletedGameIds, readLocalHistory, unmarkGameDeleted, writeLocalHistory } from "../lib/history-storage";
 import { mapDatabaseGame } from "../lib/catalog";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 import { emptyPreferences, normalizePreferences, parseFreeText, recommendGames, type HistoryItem, type Preferences } from "../lib/recommender";
@@ -86,22 +86,31 @@ export default function Home() {
   const [analysisNotice, setAnalysisNotice] = useState("翻動標籤、整理心情、點亮可能性");
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("game-match-history");
-    if (saved) setHistory(JSON.parse(saved) as HistoryItem[]);
-  }, []);
-
-  useEffect(() => {
-    if (!supabase) return;
+    if (!supabase) {
+      setHistory(readLocalHistory());
+      return;
+    }
     const client = supabase;
     let isActive = true;
 
     client.auth.getSession().then(({ data }) => {
-      if (isActive) setAuthUser(data.session?.user ?? null);
+      if (!isActive) return;
+      setAuthUser(data.session?.user ?? null);
+      setHistory(data.session ? [] : readLocalHistory());
     });
 
-    const { data: authState } = client.auth.onAuthStateChange((_event, session) => {
+    const { data: authState } = client.auth.onAuthStateChange((event, session) => {
       if (!isActive) return;
       setAuthUser(session?.user ?? null);
+      if (event === "INITIAL_SESSION") {
+        setHistory(session ? [] : readLocalHistory());
+      } else if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "USER_UPDATED") {
+        setHistory([]);
+        setPreferences({ ...emptyPreferences });
+        setFeedback(null);
+        setRating(0);
+        setIsFavorite(false);
+      }
       if (session) setIsAuthPanelOpen(false);
     });
 
@@ -129,12 +138,12 @@ export default function Home() {
 
       if (preferencesResult.data) setPreferences(preferencesFromDatabase(preferencesResult.data));
 
-      const deletedGameIds = new Set(readDeletedGameIds());
-      const localHistory = readLocalHistory().filter((item) => !deletedGameIds.has(item.gameId));
+      const deletedGameIds = new Set(readDeletedGameIds(user.id));
+      const localHistory = readLocalHistory(user.id).filter((item) => !deletedGameIds.has(item.gameId));
       const cloudHistory = (feedbackResult.data ?? []).map(historyFromDatabase).filter((item): item is HistoryItem => item !== null && !deletedGameIds.has(item.gameId));
       const mergedHistory = mergeHistory(localHistory, cloudHistory);
       setHistory(mergedHistory);
-      window.localStorage.setItem("game-match-history", JSON.stringify(mergedHistory));
+      writeLocalHistory(mergedHistory, user.id);
 
       if (localHistory.length > 0) await syncFeedbackToCloud(client, user.id, mergedHistory);
     }
@@ -244,12 +253,12 @@ export default function Home() {
         body: JSON.stringify({ text: freeText.trim() }),
       });
       if (!response.ok) throw new Error("Preference parser request failed");
-      const payload = (await response.json()) as { source?: "ai" | "local"; preferences?: unknown; message?: string };
+      const payload = (await response.json()) as { source?: "ai" | "local"; preferences?: unknown };
       if (!payload.preferences) throw new Error("Preference parser returned no preferences");
-      const notice = payload.source === "ai" ? "AI 已整理你的遊戲口味" : payload.message || "目前使用本地分析，仍可完成推薦";
+      const notice = payload.source === "ai" ? "AI 已整理你的遊戲口味" : "";
       beginAnalysis(normalizePreferences(payload.preferences), notice, "free_text");
     } catch {
-      beginAnalysis(parseFreeText(freeText), "目前使用本地分析，仍可完成推薦", "free_text");
+      beginAnalysis(parseFreeText(freeText), "", "free_text");
     } finally {
       setIsParsingFreeText(false);
     }
@@ -257,12 +266,12 @@ export default function Home() {
 
   function persistCurrentFeedback(patch: Partial<Pick<HistoryItem, "status" | "rating" | "favorite">>) {
     if (!recommendation) return;
-    unmarkGameDeleted(recommendation.id);
+    unmarkGameDeleted(recommendation.id, authUser?.id);
     const previous = history.find((item) => item.gameId === recommendation.id);
     const item: HistoryItem = { gameId: recommendation.id, status: patch.status ?? previous?.status ?? "neutral", rating: patch.rating ?? previous?.rating ?? rating, favorite: patch.favorite ?? previous?.favorite ?? isFavorite, updatedAt: new Date().toISOString() };
     const nextHistory = [...history.filter((entry) => entry.gameId !== recommendation.id), item];
     setHistory(nextHistory);
-    window.localStorage.setItem("game-match-history", JSON.stringify(nextHistory));
+    writeLocalHistory(nextHistory, authUser?.id);
     void syncFeedbackToCloud(supabase, authUser?.id, [item]);
   }
 
@@ -382,17 +391,6 @@ export default function Home() {
       {scene === "results" && !recommendation && <EmptyResults onRestart={restart} />}
     </main>
   );
-}
-
-function readLocalHistory() {
-  try {
-    const saved = window.localStorage.getItem("game-match-history");
-    if (!saved) return [];
-    const parsed = JSON.parse(saved);
-    return Array.isArray(parsed) ? parsed.filter((item): item is HistoryItem => Boolean(item && typeof item.gameId === "string")) : [];
-  } catch {
-    return [];
-  }
 }
 
 function preferencesFromDatabase(value: unknown) {
@@ -524,11 +522,11 @@ function QuestionFlow({ question, index, total, value, onChoose, onNext, onBack 
 }
 
 function FreeTextInput({ value, onChange, onSubmit, isSubmitting, onBack }: { value: string; onChange: (value: string) => void; onSubmit: () => void | Promise<void>; isSubmitting: boolean; onBack: () => void }) {
-  return <SceneFrame eyebrow="TELL ME ABOUT YOUR ADVENTURE" title={<>描述你的<br /><em>下一場冒險</em></>} className="free-text-frame"><p className="section-copy">不用想關鍵字 就像和朋友聊天一樣告訴我</p><div className="free-text-wrap"><div className="quote-mark">“</div><textarea value={value} onChange={(event) => onChange(event.target.value)} placeholder="我想找一款可以一個人玩的遊戲，時間不用太長，氣氛放鬆、有探索感……" maxLength={300} disabled={isSubmitting} /><div className="char-count">{value.length} / 300</div></div><div className="example-pills"><span>試試看：</span><button onClick={() => onChange("想找一款可以和朋友一起玩的，輕鬆又好笑的遊戲")} disabled={isSubmitting}>和朋友一起玩</button><button onClick={() => onChange("我想要一個人沉浸在有故事感的探索遊戲，最好有繁體中文")} disabled={isSubmitting}>沉浸式探索</button></div><div className="question-actions"><BackButton onClick={onBack} /><button className="primary-button" onClick={onSubmit} disabled={!value.trim() || isSubmitting}>{isSubmitting ? "整理中…" : "點亮推薦"} <span>→</span></button></div><p className="hint">已支援 AI 結構化解析；未設定 API Key 時會自動使用本地分析</p></SceneFrame>;
+  return <SceneFrame eyebrow="TELL ME ABOUT YOUR ADVENTURE" title={<>描述你的<br /><em>下一場冒險</em></>} className="free-text-frame"><p className="section-copy">不用想關鍵字 就像和朋友聊天一樣告訴我</p><div className="free-text-wrap"><div className="quote-mark">“</div><textarea value={value} onChange={(event) => onChange(event.target.value)} placeholder="我想找一款可以一個人玩的遊戲，時間不用太長，氣氛放鬆、有探索感……" maxLength={300} disabled={isSubmitting} /><div className="char-count">{value.length} / 300</div></div><div className="example-pills"><span>試試看：</span><button onClick={() => onChange("想找一款可以和朋友一起玩的，輕鬆又好笑的遊戲")} disabled={isSubmitting}>和朋友一起玩</button><button onClick={() => onChange("我想要一個人沉浸在有故事感的探索遊戲，最好有繁體中文")} disabled={isSubmitting}>沉浸式探索</button></div><div className="question-actions"><BackButton onClick={onBack} /><button className="primary-button" onClick={onSubmit} disabled={!value.trim() || isSubmitting}>{isSubmitting ? "整理中…" : "點亮推薦"} <span>→</span></button></div></SceneFrame>;
 }
 
 function Analyzing({ notice }: { notice: string }) {
-  return <SceneFrame eyebrow="A LITTLE SPARK IS ON ITS WAY" title={<>正在尋找你的<br /><em>第二人生</em></>} className="analyzing-frame"><div className="analysis-visual"><div className="analysis-flame">✦</div><div className="analysis-ring ring-one" /><div className="analysis-ring ring-two" /><div className="analysis-scan">SCANNING YOUR PLAY STYLE</div></div><p className="analysis-status">{notice}<span className="loading-dots">•••</span></p></SceneFrame>;
+  return <SceneFrame eyebrow="A LITTLE SPARK IS ON ITS WAY" title={<>正在尋找你的<br /><em>第二人生</em></>} className="analyzing-frame"><div className="analysis-visual"><div className="analysis-flame">✦</div><div className="analysis-ring ring-one" /><div className="analysis-ring ring-two" /><div className="analysis-scan">SCANNING YOUR PLAY STYLE</div></div>{notice && <p className="analysis-status">{notice}<span className="loading-dots">•••</span></p>}</SceneFrame>;
 }
 
 function traditionalChineseSupport(game: Game, type: "interface" | "subtitles" | "voice") {
