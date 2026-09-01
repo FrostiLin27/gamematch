@@ -14,6 +14,9 @@ type Scene = "landing" | "mode" | "questions" | "freeText" | "analyzing" | "resu
 type FeedbackStatus = "disliked" | "neutral" | "liked";
 type AuthMode = "signIn" | "signUp";
 
+const feedbackDisplayDuration = 2000;
+const maxRecommendationsPerSession = 5;
+
 let matchAudioContext: AudioContext | null = null;
 
 function playMatchStrike() {
@@ -84,6 +87,15 @@ export default function Home() {
   const [isFavorite, setIsFavorite] = useState(false);
   const [isParsingFreeText, setIsParsingFreeText] = useState(false);
   const [analysisNotice, setAnalysisNotice] = useState("翻動標籤、整理心情、點亮可能性");
+
+  useEffect(() => {
+    if (!feedback) return;
+    const timeoutId = window.setTimeout(() => {
+      setFeedback(null);
+      nextRecommendation();
+    }, feedbackDisplayDuration);
+    return () => window.clearTimeout(timeoutId);
+  }, [feedback]);
 
   useEffect(() => {
     if (!supabase) {
@@ -191,7 +203,7 @@ export default function Home() {
     if (shell) shell.scrollTop = 0;
   }, [scene]);
 
-  const recommendations = useMemo(() => recommendGames(preferences, history, catalog.length, catalog), [preferences, history, catalog]);
+  const recommendations = useMemo(() => recommendGames(preferences, history, maxRecommendationsPerSession, catalog), [preferences, history, catalog]);
   const recommendation = recommendations[activeRecommendation]?.game;
   const currentQuestion = questions[questionIndex];
   const currentValue = currentQuestion ? preferences[currentQuestion.key] : [];
@@ -264,21 +276,34 @@ export default function Home() {
     }
   }
 
-  function persistCurrentFeedback(patch: Partial<Pick<HistoryItem, "status" | "rating" | "favorite">>) {
-    if (!recommendation) return;
+  async function persistCurrentFeedback(patch: Partial<Pick<HistoryItem, "status" | "rating" | "favorite">>) {
+    if (!recommendation) return false;
     unmarkGameDeleted(recommendation.id, authUser?.id);
     const previous = history.find((item) => item.gameId === recommendation.id);
     const item: HistoryItem = { gameId: recommendation.id, status: patch.status ?? previous?.status ?? "neutral", rating: patch.rating ?? previous?.rating ?? rating, favorite: patch.favorite ?? previous?.favorite ?? isFavorite, updatedAt: new Date().toISOString() };
     const nextHistory = [...history.filter((entry) => entry.gameId !== recommendation.id), item];
     setHistory(nextHistory);
     writeLocalHistory(nextHistory, authUser?.id);
-    void syncFeedbackToCloud(supabase, authUser?.id, [item]);
+    await syncFeedbackToCloud(supabase, authUser?.id, [item]);
+    return true;
   }
 
-  function saveFeedback(status: FeedbackStatus) {
+  async function saveFeedback(status: FeedbackStatus) {
     if (!recommendation) return;
-    persistCurrentFeedback({ status });
+    const persistence = persistCurrentFeedback({ status });
+    if (activeRecommendation >= recommendations.length - 1) {
+      // Save the local record synchronously, then do not let a slow cloud request
+      // prevent the required end-of-session navigation.
+      void persistence.catch((error) => {
+        console.warn("Unable to finish feedback sync before leaving:", error);
+      });
+      window.location.assign("/my-games");
+      return;
+    }
     setFeedback(status);
+    void persistence.catch((error) => {
+      console.warn("Unable to finish feedback sync:", error);
+    });
   }
 
   async function submitAuth(event: React.FormEvent<HTMLFormElement>) {
@@ -333,7 +358,7 @@ export default function Home() {
 
   async function saveRecommendationSessionToCloud(nextPreferences: Preferences, source: "questionnaire" | "free_text") {
     if (!supabase || !authUser) return;
-    const matches = recommendGames(nextPreferences, history, catalog.length, catalog);
+    const matches = recommendGames(nextPreferences, history, maxRecommendationsPerSession, catalog);
     const { data: session, error: sessionError } = await supabase
       .from("recommendation_sessions")
       .insert({ user_id: authUser.id, source, preferences: nextPreferences })
@@ -357,10 +382,7 @@ export default function Home() {
       setRating(0);
       setIsFavorite(false);
     } else {
-      setFeedback(null);
-      setActiveRecommendation(0);
-      setScene("analyzing");
-      window.setTimeout(() => setScene("results"), 1200);
+      window.location.assign("/my-games");
     }
   }
 
@@ -387,7 +409,7 @@ export default function Home() {
       {scene === "questions" && currentQuestion && <QuestionFlow question={currentQuestion} index={questionIndex} total={questions.length} value={currentValue} onChoose={chooseOption} onNext={nextQuestion} onBack={() => questionIndex === 0 ? setScene("mode") : setQuestionIndex((index) => index - 1)} />}
       {scene === "freeText" && <FreeTextInput value={freeText} onChange={setFreeText} onSubmit={submitFreeText} isSubmitting={isParsingFreeText} onBack={() => setScene("mode")} />}
       {scene === "analyzing" && <Analyzing notice={analysisNotice} />}
-      {scene === "results" && recommendation && <Results game={recommendation} index={activeRecommendation} total={recommendations.length} preferences={preferences} feedback={feedback} rating={rating} favorite={isFavorite} onRate={(nextRating) => { setRating(nextRating); persistCurrentFeedback({ rating: nextRating }); }} onFavorite={() => { const nextFavorite = !isFavorite; setIsFavorite(nextFavorite); persistCurrentFeedback({ favorite: nextFavorite }); }} onFeedback={saveFeedback} onNext={nextRecommendation} onRestart={restart} onEdit={() => setScene("mode")} />}
+      {scene === "results" && recommendation && <Results game={recommendation} index={activeRecommendation} total={maxRecommendationsPerSession} preferences={preferences} feedback={feedback} rating={rating} favorite={isFavorite} onRate={(nextRating) => { setRating(nextRating); persistCurrentFeedback({ rating: nextRating }); }} onFavorite={() => { const nextFavorite = !isFavorite; setIsFavorite(nextFavorite); persistCurrentFeedback({ favorite: nextFavorite }); }} onFeedback={saveFeedback} onNext={nextRecommendation} onRestart={restart} onEdit={() => setScene("mode")} />}
       {scene === "results" && !recommendation && <EmptyResults onRestart={restart} />}
     </main>
   );
@@ -541,7 +563,7 @@ function traditionalChineseSupportValue(game: Game, type: "interface" | "subtitl
 
 function Results({ game, index, total, preferences, feedback, rating, favorite, onRate, onFavorite, onFeedback, onNext, onRestart, onEdit }: { game: Game; index: number; total: number; preferences: Preferences; feedback: FeedbackStatus | null; rating: number; favorite: boolean; onRate: (rating: number) => void; onFavorite: () => void; onFeedback: (status: FeedbackStatus) => void; onNext: () => void; onRestart: () => void; onEdit: () => void }) {
   const matchedTags = [...preferences.genres, ...preferences.moods, ...preferences.modes].filter((tag) => game.genres.includes(tag) || game.moods.includes(tag) || game.modes.includes(tag)).slice(0, 4);
-  return <SceneFrame eyebrow={`YOUR MATCH ${String(index + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}`} title={<>這一支火柴，<em>為你而亮</em></>} className="results-frame"><div className="result-layout"><div className={`game-cover ${game.coverClass}`} style={game.coverUrl ? { backgroundImage: `linear-gradient(rgba(28,47,77,.1), rgba(28,47,77,.42)), url(${game.coverUrl})` } : undefined}><span className="cover-label">GAME MATCH<br /><b>{game.source === "steam" ? "STEAM DISCOVERY" : "DISCOVERY EDITION"}</b></span></div><div className="game-info"><div className="game-kicker">MATCH FOUND <span>✦</span></div><h2>{game.nameZh}</h2><p className="game-en">{game.nameEn}</p><p className="game-description">{game.description}</p><div className="tag-row">{game.genres.slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}{game.moods.slice(0, 2).map((tag) => <span key={tag} className="warm-tag">{tag}</span>)}</div><div className="recommend-reason"><span>✦</span><p>{buildVisibleReason(game, preferences, matchedTags)}</p></div>{game.steamUrl && <a className="steam-link" href={game.steamUrl} target="_blank" rel="noreferrer">在 Steam 查看 ↗</a>}</div></div><div className="detail-grid"><Detail label="遊玩方式" value={game.modes.join(" · ")} /><Detail label="遊玩時間" value={optionLabels[game.session] || "中等長度"} /><Detail label="支援平台" value={game.platforms.slice(0, 3).join(" · ")} /><Detail label="價格區間" value={game.priceRange} /><Detail label="遊戲難度" value={difficultyLabels[game.difficulty] || "有點挑戰"} /><Detail label="繁中介面" value={traditionalChineseSupportValue(game, "interface")} /><Detail label="繁中字幕" value={traditionalChineseSupportValue(game, "subtitles")} /><Detail label="繁中語音" value={traditionalChineseSupportValue(game, "voice")} /></div><div className="feedback-card"><div><strong>這根火柴適合你嗎？</strong><small>告訴我你的感覺，下次會更懂你。</small></div><div className="rating-row" aria-label="喜好評分">{[1, 2, 3, 4, 5].map((star) => <button key={star} className={rating >= star ? "rated" : ""} onClick={() => onRate(star)} aria-label={`${star} 分`}>★</button>)}</div><button className={`favorite-button ${favorite ? "active" : ""}`} onClick={onFavorite} aria-label="收藏">♡</button></div>{feedback ? <div className="feedback-saved"><span>✓</span> 已記住你的回饋 <button onClick={onNext}>換一根火柴 →</button></div> : <div className="feedback-actions"><button className="feedback-negative" onClick={() => onFeedback("disliked")}>玩過／不適合</button><button onClick={() => onFeedback("neutral")}>還不確定</button><button className="feedback-positive" onClick={() => onFeedback("liked")}>想試試看 ✦</button></div>}<div className="result-footer"><button onClick={onEdit}>修改偏好</button><button onClick={onRestart}>重新開始</button><button className="next-button" onClick={onNext}>下一款推薦 <span>→</span></button></div></SceneFrame>;
+  return <SceneFrame eyebrow={`YOUR MATCH ${String(index + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}`} title={<>這一支火柴，<em>為你而亮</em></>} className="results-frame"><div className="result-layout"><div className={`game-cover ${game.coverClass}`} style={game.coverUrl ? { backgroundImage: `linear-gradient(rgba(28,47,77,.1), rgba(28,47,77,.42)), url(${game.coverUrl})` } : undefined}><span className="cover-label">GAME MATCH<br /><b>{game.source === "steam" ? "STEAM DISCOVERY" : "DISCOVERY EDITION"}</b></span></div><div className="game-info"><div className="game-kicker">MATCH FOUND <span>✦</span></div><h2>{game.nameZh}</h2><p className="game-en">{game.nameEn}</p><p className="game-description">{game.description}</p><div className="tag-row">{game.genres.slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}{game.moods.slice(0, 2).map((tag) => <span key={tag} className="warm-tag">{tag}</span>)}</div><div className="recommend-reason"><span>✦</span><p>{buildVisibleReason(game, preferences, matchedTags)}</p></div>{game.steamUrl && <a className="steam-link" href={game.steamUrl} target="_blank" rel="noreferrer">在 Steam 查看 ↗</a>}</div></div><div className="detail-grid"><Detail label="遊玩方式" value={game.modes.join(" · ")} /><Detail label="遊玩時間" value={optionLabels[game.session] || "中等長度"} /><Detail label="支援平台" value={game.platforms.slice(0, 3).join(" · ")} /><Detail label="價格區間" value={game.priceRange} /><Detail label="遊戲難度" value={difficultyLabels[game.difficulty] || "有點挑戰"} /><Detail label="繁中介面" value={traditionalChineseSupportValue(game, "interface")} /><Detail label="繁中字幕" value={traditionalChineseSupportValue(game, "subtitles")} /><Detail label="繁中語音" value={traditionalChineseSupportValue(game, "voice")} /></div><div className="feedback-card"><div><strong>這根火柴適合你嗎？</strong><small>告訴我你的感覺，下次會更懂你。</small></div><div className="rating-row" aria-label="喜好評分">{[1, 2, 3, 4, 5].map((star) => <button key={star} className={rating >= star ? "rated" : ""} onClick={() => onRate(star)} aria-label={`${star} 分`}>★</button>)}</div><button className={`favorite-button ${favorite ? "active" : ""}`} onClick={onFavorite} aria-label="收藏">♡</button></div>{feedback ? <div className="feedback-saved"><span>✓</span> 已記住你的回饋</div> : <div className="feedback-actions"><button className="feedback-negative" onClick={() => onFeedback("disliked")}>玩過／不適合</button><button onClick={() => onFeedback("neutral")}>還不確定</button><button className="feedback-positive" onClick={() => onFeedback("liked")}>想試試看 ✦</button></div>}<div className="result-footer"><button onClick={onEdit}>修改偏好</button><button onClick={onRestart}>重新開始</button><button className="next-button" onClick={onNext}>下一款推薦 <span>→</span></button></div></SceneFrame>;
 }
 
 function buildVisibleReason(game: Game, preferences: Preferences, matchedTags: string[]) {
